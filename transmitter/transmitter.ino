@@ -12,6 +12,11 @@ static BLERemoteCharacteristic *pRemoteCharacteristic = nullptr;
 
 const char *aesKey = ""; 
 
+// Function to set BLE transmit power level
+void setBLEPowerLevel(int powerLevel) {
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, (esp_power_level_t)powerLevel);        // Set for advertising
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_CONN_HDL0, (esp_power_level_t)powerLevel);  // Set for connection
+}
 class MyClientCallback : public BLEClientCallbacks {
   void onConnect(BLEClient *pclient) {
     connected = true;
@@ -70,6 +75,8 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Starting BLE Client application...");
   BLEDevice::init("");
+  // Set transmit power level (e.g., ESP_PWR_LVL_N2 or ESP_PWR_LVL_N8 to reduce range)
+  setBLEPowerLevel(ESP_PWR_LVL_N12);  // Use ESP_PWR_LVL_N12 for lowest power, ESP_PWR_LVL_P9 for highest
 
   if (connectToServer()) {
     Serial.println("Successfully connected to BLE server.");
@@ -86,7 +93,7 @@ void loop() {
     encryptAES(ciphertext, plaintext, (uint8_t *)aesKey);
 
     pRemoteCharacteristic->writeValue(ciphertext, sizeof(ciphertext));
-    Serial.println("Encrypted command sent: OPEN_DOOR");
+    Serial.println("Encrypted command sent");
 
     commandSent = true; 
   }

@@ -21,12 +21,9 @@ void decryptAES(uint8_t *output, const uint8_t *input, const uint8_t *key) {
 }
 void trigger_relay(int relayPin, int seconds) {
 
-  Serial.println("Door opened\n");
-  digitalWrite(relayPin, HIGH);  
-  delay(seconds *1000);                  
+  digitalWrite(relayPin, HIGH);
+  delay(seconds * 1000);
   digitalWrite(relayPin, LOW);
-  Serial.println("Door closed\n");
-  delay(60000);
 }
 
 // Class to handle BLE characteristic write events
@@ -34,7 +31,7 @@ class MyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     String value = pCharacteristic->getValue();  // Get the incoming data
     if (value.length() != 16) {                  // Verify the expected length of AES block size (16 bytes)
-      Serial.println("Invalid command length");
+      Serial.println("Server: Invalid command length");
       return;
     }
 
@@ -43,10 +40,10 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 
     // Check if the decrypted message matches the expected "OPEN_DOOR" command
     if (memcmp(decryptedText, "OPEN_DOOR", 9) == 0) {
-      Serial.println("Received command: OPEN_DOOR");
-      trigger_relay(relayPin, 30);
+      Serial.println("Server: Received command: OPEN_DOOR");
+      trigger_relay(relayPin, 1);
     } else {
-      Serial.println("Unknown command");
+      Serial.println("Server: Unknown command");
     }
   }
 };
@@ -54,23 +51,35 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 // Class to handle client connection and disconnection events
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *pServer) {
-    Serial.println("Client connected");
+    Serial.println("Server: Client connected");
   }
 
   void onDisconnect(BLEServer *pServer) {
-    Serial.println("Client disconnected");
+    Serial.println("Server: Client disconnected");
+    Serial.println("Door: Closing Door!");
+
+    trigger_relay(relayPin, 1);
+
     BLEDevice::startAdvertising();  // Restart advertising after disconnection
   }
 };
-
+// Function to set BLE transmit power level
+void setBLEPowerLevel(int powerLevel) {
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, (esp_power_level_t)powerLevel);        // Set for advertising
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_CONN_HDL0, (esp_power_level_t)powerLevel);  // Set for connection
+}
 void setup() {
   Serial.begin(115200);
-  Serial.println("Starting BLE Server");
-
+  Serial.println("Server: Starting BLE Server");
+  
   pinMode(relayPin, OUTPUT);
   digitalWrite(relayPin, LOW);  // Ensure relay is off initially
 
   BLEDevice::init("esp32_door_server");
+
+  // Set transmit power level (e.g., ESP_PWR_LVL_N2 or ESP_PWR_LVL_N8 to reduce range)
+  setBLEPowerLevel(ESP_PWR_LVL_N12);  // Use ESP_PWR_LVL_N12 for lowest power, ESP_PWR_LVL_P9 for highest
+
   BLEServer *pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
   BLEService *pService = pServer->createService(SERVICE_UUID);
@@ -88,7 +97,7 @@ void setup() {
   pAdvertising->setMinPreferred(0x12);
   BLEDevice::startAdvertising();
 
-  Serial.println("BLE Server started, waiting for commands...");
+  Serial.println("Server: BLE Server started, waiting for commands...");
 }
 
 void loop() {
