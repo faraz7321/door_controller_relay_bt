@@ -1,43 +1,102 @@
-#define IR_SEND_PIN 3
+#include "BLEDevice.h"
+#include "mbedtls/aes.h"
 
-#include <Arduino.h>
-#include "PinDefinitionsAndMore.h"
-#include <IRremote.hpp>
+static BLEAddress serverAddress("34:5f:45:aa:5d:fe");
 
-const int buttonPin = 10;
+static BLEUUID serviceUUID("38d36a74-e1b0-4d6c-b2ce-01f798c1b537");
+static BLEUUID charUUID("294219fc-fe05-408d-9a8c-9571af83e78d");
 
-void setup() {
-  pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(buttonPin, INPUT); // Initialization sensor pin
-  digitalWrite(buttonPin, HIGH); // Activation of internal pull-up resistor
+static boolean connected = false;
+static boolean commandSent = false; 
+static BLERemoteCharacteristic *pRemoteCharacteristic = nullptr;
 
-  Serial.begin(115200);
+const char *aesKey = "ef-robotics12345"; 
 
-  // Just to know which program is running on my Arduino
-  Serial.println(F("START " __FILE__ " from " __DATE__ "\r\nUsing library version " VERSION_IRREMOTE));
+class MyClientCallback : public BLEClientCallbacks {
+  void onConnect(BLEClient *pclient) {
+    connected = true;
+    Serial.println("Connected to server.");
+  }
 
-  /*
-     The IR library setup. That's all!
-  */
-  IrSender.begin();
-  Serial.print(F("Ready to send IR signals at pin "));
-  Serial.println(IR_SEND_PIN);
+  void onDisconnect(BLEClient *pclient) {
+    connected = false;
+    commandSent = false; 
+    Serial.println("Disconnected from server.");
+  }
+};
+
+// AES encryption function
+void encryptAES(uint8_t *output, const uint8_t *input, const uint8_t *key) {
+  mbedtls_aes_context aes;
+  mbedtls_aes_init(&aes);
+  mbedtls_aes_setkey_enc(&aes, key, 128); 
+  mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, input, output);
+  mbedtls_aes_free(&aes);
 }
 
+bool connectToServer() {
+  Serial.print("Attempting to connect to ");
+  Serial.println(serverAddress.toString().c_str());
 
-uint16_t sAddress = 0x0102;
-uint8_t sCommand = 0x34;
+  BLEClient *pClient = BLEDevice::createClient();
+  pClient->setClientCallbacks(new MyClientCallback());
 
-uint8_t sRepeats = 0;
+  if (!pClient->connect(serverAddress)) { 
+    Serial.println("Failed to connect to server.");
+    return false;
+  }
+
+  Serial.println(" - Connected to server.");
+  pClient->setMTU(517);
+
+  BLERemoteService *pRemoteService = pClient->getService(serviceUUID);
+  if (pRemoteService == nullptr) {
+    Serial.println("Failed to find our service UUID.");
+    pClient->disconnect();
+    return false;
+  }
+
+  pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
+  if (pRemoteCharacteristic == nullptr) {
+    Serial.println("Failed to find our characteristic UUID.");
+    pClient->disconnect();
+    return false;
+  }
+
+  return true;
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Starting BLE Client application...");
+  BLEDevice::init("");
+
+  if (connectToServer()) {
+    Serial.println("Successfully connected to BLE server.");
+  } else {
+    Serial.println("Failed to connect to BLE server.");
+  }
+}
 
 void loop() {
+  if (connected && !commandSent) {
+    uint8_t plaintext[16] = "OPEN_DOOR";
+    uint8_t ciphertext[16];
+    
+    encryptAES(ciphertext, plaintext, (uint8_t *)aesKey);
 
-  if(digitalRead(buttonPin) == LOW ){
+    pRemoteCharacteristic->writeValue(ciphertext, sizeof(ciphertext));
+    Serial.println("Encrypted command sent: OPEN_DOOR");
 
-  Serial.println(F("Send NEC with 16 bit address"));
-  Serial.flush();
-
-  IrSender.sendNEC(sAddress, sCommand, sRepeats);
-  delay(1000);
+    commandSent = true; 
   }
+
+  if (!connected) {
+    if (connectToServer()) {
+      Serial.println("Reconnected to BLE server.");
+    }
+    delay(5000);
+  }
+
+  delay(1000); 
 }
