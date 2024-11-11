@@ -9,7 +9,7 @@
 // GPIO pin connected to the relay
 const int relayPin = 17;
 
-const char *aesKey = "ef-robotics12345";
+const char *aesKey = "";
 
 // AES decryption function
 void decryptAES(uint8_t *output, const uint8_t *input, const uint8_t *key) {

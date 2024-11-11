@@ -10,7 +10,7 @@ static boolean connected = false;
 static boolean commandSent = false; 
 static BLERemoteCharacteristic *pRemoteCharacteristic = nullptr;
 
-const char *aesKey = "ef-robotics12345"; 
+const char *aesKey = ""; 
 
 class MyClientCallback : public BLEClientCallbacks {
   void onConnect(BLEClient *pclient) {
