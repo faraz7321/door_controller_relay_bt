@@ -1,32 +1,44 @@
 #include "BLEDevice.h"
 #include "mbedtls/aes.h"
 
+// BLE server address and UUIDs
 static BLEAddress serverAddress("34:5f:45:aa:5d:fe");
-
 static BLEUUID serviceUUID("38d36a74-e1b0-4d6c-b2ce-01f798c1b537");
 static BLEUUID charUUID("294219fc-fe05-408d-9a8c-9571af83e78d");
 
 static boolean connected = false;
 static boolean commandSent = false; 
 static BLERemoteCharacteristic *pRemoteCharacteristic = nullptr;
+BLEClient *pClient = nullptr; 
 
-const char *aesKey = ""; 
+const char *aesKey = "ef-robotics123456";
+
+int counter = 0;
+const int n_of_attempts = 10;
+
+// Variables for 10-second RSSI monitoring
+bool monitorRssi = false;
+unsigned long rssiStartTime = 0;
+int rssiSum = 0;
+int rssiCount = 0;
 
 // Function to set BLE transmit power level
 void setBLEPowerLevel(int powerLevel) {
-  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, (esp_power_level_t)powerLevel);        // Set for advertising
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, (esp_power_level_t)powerLevel);        // Set for advertising
   esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_CONN_HDL0, (esp_power_level_t)powerLevel);  // Set for connection
+  Serial.println("Client: Power level set");
 }
-class MyClientCallback : public BLEClientCallbacks {
+
+class ClientCallback : public BLEClientCallbacks {
   void onConnect(BLEClient *pclient) {
     connected = true;
-    Serial.println("Connected to server.");
+    Serial.println("Client: Connected to server.");
   }
 
   void onDisconnect(BLEClient *pclient) {
     connected = false;
     commandSent = false; 
-    Serial.println("Disconnected from server.");
+    Serial.println("Client: Disconnected from server.");
   }
 };
 
@@ -40,14 +52,14 @@ void encryptAES(uint8_t *output, const uint8_t *input, const uint8_t *key) {
 }
 
 bool connectToServer() {
-  Serial.print("Attempting to connect to ");
+  Serial.print("Client: Attempting to connect to ");
   Serial.println(serverAddress.toString().c_str());
 
-  BLEClient *pClient = BLEDevice::createClient();
-  pClient->setClientCallbacks(new MyClientCallback());
+  pClient = BLEDevice::createClient();
+  pClient->setClientCallbacks(new ClientCallback());
 
   if (!pClient->connect(serverAddress)) { 
-    Serial.println("Failed to connect to server.");
+    Serial.println("Client: Failed to connect to BLE server.");
     return false;
   }
 
@@ -56,14 +68,14 @@ bool connectToServer() {
 
   BLERemoteService *pRemoteService = pClient->getService(serviceUUID);
   if (pRemoteService == nullptr) {
-    Serial.println("Failed to find our service UUID.");
+    Serial.println("Client: Failed to find our service UUID.");
     pClient->disconnect();
     return false;
   }
 
   pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
   if (pRemoteCharacteristic == nullptr) {
-    Serial.println("Failed to find our characteristic UUID.");
+    Serial.println("Client: Failed to find our characteristic UUID.");
     pClient->disconnect();
     return false;
   }
@@ -71,38 +83,54 @@ bool connectToServer() {
   return true;
 }
 
+void cmd_open_door() {
+
+  uint8_t plaintext[16] = {0}; 
+  memcpy(plaintext, "OPEN_DOOR", 9);
+  int rssi = pClient->getRssi();
+  memcpy(plaintext + 9, &rssi, sizeof(rssi));
+  uint8_t ciphertext[16];
+  encryptAES(ciphertext, plaintext, (uint8_t *)aesKey);
+
+  pRemoteCharacteristic->writeValue(ciphertext, sizeof(ciphertext));
+  Serial.printf("Client: Command Sent! RSSI: %d\n", rssi);
+}
+
 void setup() {
   Serial.begin(115200);
-  Serial.println("Starting BLE Client application...");
+  Serial.println("Client: Starting BLE Client application...");
   BLEDevice::init("");
+
   // Set transmit power level (e.g., ESP_PWR_LVL_N2 or ESP_PWR_LVL_N8 to reduce range)
-  setBLEPowerLevel(ESP_PWR_LVL_N12);  // Use ESP_PWR_LVL_N12 for lowest power, ESP_PWR_LVL_P9 for highest
+  setBLEPowerLevel(ESP_PWR_LVL_P9);  // Use ESP_PWR_LVL_N12 for lowest power, ESP_PWR_LVL_P9 for highest
 
   if (connectToServer()) {
-    Serial.println("Successfully connected to BLE server.");
+    Serial.println("Client: Successfully connected to BLE server.");
+    counter = 0;
   } else {
-    Serial.println("Failed to connect to BLE server.");
+    Serial.println("Client: Failed to connect to BLE server.");
   }
 }
 
+
 void loop() {
-  if (connected && !commandSent) {
-    uint8_t plaintext[16] = "OPEN_DOOR";
-    uint8_t ciphertext[16];
-    
-    encryptAES(ciphertext, plaintext, (uint8_t *)aesKey);
-
-    pRemoteCharacteristic->writeValue(ciphertext, sizeof(ciphertext));
-    Serial.println("Encrypted command sent");
-
-    commandSent = true; 
+  if (connected && !commandSent && counter <= n_of_attempts) {
+    cmd_open_door(); // Send the command with RSSI once upon connection
+    //counter++;
+    if(counter > n_of_attempts){
+      commandSent = true;
+      Serial.printf("Client: Command tranmission done %d times.\n", n_of_attempts);
+      counter = 0; //reset
+    }
+     
   }
 
   if (!connected) {
     if (connectToServer()) {
       Serial.println("Reconnected to BLE server.");
+      counter = 0;
     }
-    delay(5000);
+    delay(5000); // Retry connection every 5 seconds if disconnected
   }
 
   delay(1000); 
